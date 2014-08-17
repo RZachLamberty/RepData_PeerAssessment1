@@ -1,20 +1,243 @@
-# Reproducible Research: Peer Assessment 1
-
+---
+title: "Reproducible Research: Peer Assessment 1"
+author: "R Zach Lamberty"
+date: "08/16/2014"
+output: html_document
+---
 
 ## Loading and preprocessing the data
 
+Load this sucker (assuming that this is being knit from within the same
+directory as "activity.zip" is stored):
+```{r}
+activity <- read.csv(unz("activity.zip", "activity.csv"))
+```
 
+Looks good 'nuff for me.
 
 ## What is mean total number of steps taken per day?
 
+Because some entire days have no information regarding the number of steps, we
+will filter out all NA before ddply-ing rather than in the `mean` and `sum`
+functions (thus avoiding pesky `NaN`s)
+```{r}
+library(plyr)
+notNA.activity <- activity[!is.na(activity$steps), ]
+activity.by.day <- ddply(
+  .data=notNA.activity,
+  .variables=.(date),
+  .fun=function(x) {
+    c(
+      total.steps=sum(x$steps),
+      mean.steps=mean(x$steps),
+      median.steps=median(x$steps)
+    )
+  }
+)
+```
 
+Hisssssssssssstogram
+```{r}
+library(ggplot2)
+ggplot(activity.by.day, aes(x=total.steps)) +
+  geom_histogram(color="black", fill="blue") +
+  xlab("Steps") +
+  ggtitle("Total steps taken per day")
+```
+
+All right, all right, I'll report everything -- no need to be so `mean`.
+```{r, echo=FALSE}
+activity.by.day[, -2]
+```
+
+Though it looks odd at first, I believe the all-0 medians to be accurate -- the
+vast majority of the time people are simply not taking steps.
 
 ## What is the average daily activity pattern?
 
+Now we are more interested in the activity day-to-day, so let's re-ddply
+ourselves.
+```{r}
+activity.by.interval <- ddply(
+  .data=activity,
+  .variables=.(interval),
+  .fun=function(x) {
+    c(
+      ave.steps=mean(x$steps, na.rm=T),
+      max.steps=max(x$steps, na.rm=T)
+    )
+  }
+)
+```
 
+Hot to plot 
+```{r}
+ggplot(activity.by.interval, aes(x=interval, y=ave.steps)) +
+  geom_line(color="blue", fill="blue") +
+  ylab("Steps") +
+  ggtitle("Average number of steps per interval")
+```
+
+Taking it to the max,
+```{r}
+max.all <- max(activity.by.interval$max.steps)
+max.ave <- max(activity.by.interval$ave.steps)
+interval.max.all <- activity.by.interval[activity.by.interval$max.steps == max.all, "interval"]
+interval.max.ave <- activity.by.interval[activity.by.interval$ave.steps == max.ave, "interval"]
+interval.diff <- interval.max.ave - interval.max.all
+interval.as.time <- function(i) {
+  x <- as.character(i)
+  paste(
+    substr(x, 1, nchar(x) - 2),
+    substr(x, nchar(x) - 1, nchar(x)),
+    sep=":"  
+  )
+}
+```
+
+To answer the specific question asked in this project description, the interval
+which has the largest average number of steps (`r max.ave`) during it across all
+days is interval `r interval.as.time(interval.max.ave)`. For what it is worth,
+this is over `r interval.as.time(interval.diff)` away from the maximum number of
+steps (`r max.all`) taken in a **single** interval, taken on a single day within
+interval `r interval.as.time(interval.max.all)`. Looks like some early bird is
+gettin that worm.
 
 ## Imputing missing values
 
+In the activity data set, there are
 
+```{r}
+nrow(activity) - sum(complete.cases(activity))
+```
+
+rows with missing data in them.
+
+We will replace all missing step data with the average number of steps in the
+corresponding interval over all days which have data:
+
+```{r}
+activity.imputed <- activity
+for (i in 1:nrow(activity.by.interval)) {
+  interval <- activity.by.interval[i, "interval"]
+  aveSteps <- activity.by.interval[i, "ave.steps"]
+  toFix <- activity.imputed$interval == interval & is.na(activity.imputed$steps)
+  activity.imputed[toFix, "steps"] <- aveSteps
+}
+```
+
+After this step we have
+```{r}
+nrow(activity.imputed) - sum(complete.cases(activity.imputed))
+```
+
+missing data points in our `activity.imputed` data frame.
+
+Now, repeating the steps in part 1 with this `activity.imputed` data frame;
+
+```{r}
+activity.imputed.by.day <- ddply(
+  .data=activity.imputed,
+  .variables=.(date),
+  .fun=function(x) {
+    c(
+      total.steps=sum(x$steps),
+      mean.steps=mean(x$steps),
+      median.steps=median(x$steps)
+    )
+  }
+)
+```
+
+Hisssssssssssstogram part deux
+```{r}
+ggplot(activity.imputed.by.day, aes(x=total.steps)) +
+  geom_histogram(color="black", fill="blue") +
+  xlab("Steps") +
+  ggtitle("Total steps taken per day")
+```
+
+All right, all right, I'll report everything *again* -- no need to be so `mean`.
+```{r, echo=FALSE}
+activity.imputed.by.day[, -2]
+```
+
+You'll notice that we have introducted some weird behavior here in that several
+days now have `34.11` median steps. These dates are the same for which we just
+imputed all `NA` step values from the average over all days in the corresponding
+interval. What we are reporting on those rows is not really the mean number of
+steps on *those* days, but the mean number of steps on *any* day.
+
+We would have to do considerably more work (*i.e.* generate an appropriate
+distribution) to create values for steps on the "`NA` days" that had the *any*
+day mean but a median of 0.
+
+Finally, a side-by-side comparison thanks to our friends at `ggplot2`:
+```{r}
+df.join <- rbind(
+  cbind(activity.by.day, dataset="with na"),
+  cbind(activity.imputed.by.day, dataset="imputed")
+)
+df.join$dataset <- as.factor(df.join$dataset)
+ggplot(df.join, aes(x=total.steps, fill=dataset)) +
+  geom_histogram(color="black", position="dodge") +
+  xlab("Steps") +
+  ggtitle("Total steps taken per day")
+```
+
+From this side-by-side it's pretty easy to see that what we did was replace the
+8 `NA` days with the median behavior -- in this case, 8 more counts of the
+median number of steps per day in the **imputed** data set than in the
+**with na** data set.
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+We start by creating our factor:
+```{r}
+activity.imputed$datetype <- factor(
+  x=weekdays(as.Date(activity.imputed$date)) %in% c("Saturday", "Sunday"),
+  levels=c(FALSE, TRUE),
+  labels=c("weekday", "weekend")
+)
+```
+
+Creating the splittable factor is the same as above in step 3:
+```{r}
+activity.imputed.by.interval <- ddply(
+  .data=activity.imputed,
+  .variables=.(interval, datetype),
+  .fun=function(x) {
+    c(
+      ave.steps=mean(x$steps, na.rm=T),
+      max.steps=max(x$steps, na.rm=T)
+    )
+  }
+)
+```
+
+Now, I think the side-by-side plot is much better for comparison than the panel
+plot:
+```{r}
+ggplot(activity.imputed.by.interval,
+       aes(x=interval, y=ave.steps, color=datetype)) +
+  geom_line() +
+  ylab("Steps") +
+  ggtitle("Average number of steps per interval")
+```
+
+The story here is pretty clear: on weekdays, people are taking many more steps
+early -- this is their commute to work. This activity all happens up until about
+9:30 AM, at which point the trend totally inverts, and people are far more
+sedantary on week- / work-days than they are on the weekends. There is a brief
+reversal again at quittin' time (c. 6PM) in which work commuters are walking a
+bit more than their weekend counterparts, but this tails off again once they
+get home.
+
+And for those of you who simply cannot live without a panel plot, I give you
+```{r}
+ggplot(activity.imputed.by.interval, aes(x=interval, y=ave.steps)) +
+  geom_line(color="blue") +
+  facet_wrap(~ datetype) +
+  ylab("Steps") +
+  ggtitle("Average number of steps per interval")
+```
